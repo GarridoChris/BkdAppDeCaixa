@@ -1,15 +1,9 @@
 const express = require('express')
 const router = express()
+const newUser = require("./User/newUser.js")
 
-router.get('/',(req, res) => {
-    console.log("ben there done that")
+router.post('/', newUser)
 
-})
+module.exports = router
 
-module.exports = {
-    router
-}
 
-const openRegister = () => {
-    
-}
