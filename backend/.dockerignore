@@ -1,0 +1,10 @@
+**
+!src/
+!src/**
+**/bin
+**/obj
+**/.env*
+**/*.pem
+**/*.pfx
+**/*.key
+**/*.user
