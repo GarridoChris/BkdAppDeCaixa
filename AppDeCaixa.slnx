@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/backend/" />
+  <Folder Name="/backend/src/">
+    <Project Path="backend/src/AppDeCaixa.Api/AppDeCaixa.Api.csproj" />
+    <Project Path="backend/src/AppDeCaixa.Application/AppDeCaixa.Application.csproj" />
+    <Project Path="backend/src/AppDeCaixa.Domain/AppDeCaixa.Domain.csproj" />
+    <Project Path="backend/src/AppDeCaixa.Infrastructure/AppDeCaixa.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/backend/tests/">
+    <Project Path="backend/tests/AppDeCaixa.Domain.Tests/AppDeCaixa.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
