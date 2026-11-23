@@ -113,6 +113,16 @@ HTTP errors use Problem Details via ASP.NET Core exception handling. Unexpected 
 
 PostgreSQL is configured from `ConnectionStrings:Default` (environment form: `ConnectionStrings__Default`). The default database name is `organizaeh`; `backend/docker-compose.yml` is for local development. The EF Core context is in Infrastructure. The first migration creates the original salon tables for a blank database and only adds nullable columns and constraints to a database where those tables already exist. Do not enable automatic migrations at application startup.
 
+### Apply migrations on Railway
+
+Set `ConnectionStrings__Default` on the API service to the target PostgreSQL database. In **Settings → Deploy → Pre-Deploy Command**, enter:
+
+```text
+dotnet /app/AppDeCaixa.Api.dll --migrate
+```
+
+Railway runs this command in the built API image with access to the private database. The command applies pending EF migrations and exits. The Dockerfile supplies the web server's start command. Confirm the destination before the first run, especially if you plan to restore a full backup. Leave `APPDECAIXA_SEED_DEMO` unset for production.
+
 `backend/.env.example` lists configuration names and placeholders. PowerShell does not automatically load that file; set environment variables in the shell or use a local secret manager. The checked-in development fallback connection string is strictly local and must never be reused outside development.
 
 ### Existing database schema review
