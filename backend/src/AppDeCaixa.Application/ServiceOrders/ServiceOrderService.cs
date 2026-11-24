@@ -1,5 +1,8 @@
 namespace AppDeCaixa.Application.ServiceOrders;
 
+public sealed record OpenServiceOrderSummary(
+    int Id, string? ClientName, int? CashSessionId, DateTime OpenedAt, string Status, int TotalValue);
+
 public sealed class ServiceOrderItemDetails
 {
     public int ItemId { get; set; }
@@ -63,6 +66,7 @@ public sealed record ServiceOrderOperationResult(
 
 public interface IServiceOrderRepository
 {
+    Task<IReadOnlyList<OpenServiceOrderSummary>> ListOpenAsync(int companyId, CancellationToken cancellationToken);
     Task<ServiceOrderDetails?> GetByIdAsync(int companyId, int orderId, CancellationToken cancellationToken);
     Task<ServiceOrderOperationResult> OpenAsync(
         int companyId,
@@ -85,6 +89,9 @@ public interface IServiceOrderRepository
 
 public sealed class ServiceOrderService(IServiceOrderRepository repository)
 {
+    public Task<IReadOnlyList<OpenServiceOrderSummary>> ListOpenAsync(int companyId, CancellationToken cancellationToken) =>
+        repository.ListOpenAsync(companyId, cancellationToken);
+
     public Task<ServiceOrderDetails?> GetByIdAsync(
         int companyId,
         int orderId,

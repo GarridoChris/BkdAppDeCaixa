@@ -64,7 +64,8 @@ public sealed class OrderPaymentRepository(AppDbContext dbContext) : IOrderPayme
         bool isManager,
         string? note,
         DateTime recordedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ExpectedOrder? expectedOrder)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
@@ -121,11 +122,17 @@ public sealed class OrderPaymentRepository(AppDbContext dbContext) : IOrderPayme
             return Conflict("This order already has a payment record.");
         }
 
-        var orderTotal = await dbContext.Database.SqlQuery<long>($"""
-            SELECT COALESCE(SUM(valor_unitario)::bigint, 0) AS "Value"
+        var totals = await dbContext.Database.SqlQuery<PaymentTotals>($"""
+            SELECT COALESCE(SUM(valor_unitario), 0) AS "TotalValue", COUNT(*) AS "ItemCount"
             FROM public.comanda_servico
             WHERE comanda_id = {orderId}
             """).SingleAsync(cancellationToken);
+        var orderTotal = totals.TotalValue;
+        if (expectedOrder is not null && !expectedOrder.Matches(orderTotal, totals.ItemCount))
+        {
+            return Conflict("The order changed. Review the items and total before confirming payment.");
+        }
+
         if (orderTotal < 0 || orderTotal > int.MaxValue)
         {
             return ValidationError("The order total is outside the amount range supported by the database.");
@@ -221,5 +228,11 @@ public sealed class OrderPaymentRepository(AppDbContext dbContext) : IOrderPayme
         public int Id { get; set; }
         public string Name { get; set; } = "";
         public bool RequiresManagerAuthorization { get; set; }
+    }
+
+    private sealed class PaymentTotals
+    {
+        public long TotalValue { get; set; }
+        public long ItemCount { get; set; }
     }
 }
