@@ -38,7 +38,8 @@ public static class PaymentEndpoints
                     principal.IsInRole("Manager"),
                     request.Note,
                     businessDate.LocalNow,
-                    cancellationToken);
+                    cancellationToken,
+                    request.ExpectedOrder);
 
                 return ToHttpResult(result);
             })
@@ -69,5 +70,5 @@ public static class PaymentEndpoints
         _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
 
-    public sealed record RecordOrderPaymentRequest(int PaymentMethodId, string? Note = null);
+    public sealed record RecordOrderPaymentRequest(int PaymentMethodId, string? Note = null, ExpectedOrder? ExpectedOrder = null);
 }

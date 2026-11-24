@@ -8,26 +8,25 @@ public partial class ExistingSchemaAuthAndOrderLinks : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        // This migration was originally a delta for the salon's pre-existing
-        // database. For a brand-new database, create that legacy baseline first;
-        // databases that already contain the schema are left as-is.
+        // Bootstrap the tables the API needs on a new database. Existing
+        // databases may still have the unused legacy entrada table.
         migrationBuilder.Sql("""
             DO $$
             DECLARE
-                missing_table_count integer;
-                expected_table_count constant integer := 12;
-            BEGIN
-                SELECT COUNT(*)
-                INTO missing_table_count
-                FROM unnest(ARRAY[
+                required_tables constant text[] := ARRAY[
                     'caixa', 'colaborador', 'comanda', 'comanda_pagamento',
-                    'comanda_servico', 'empresa', 'entrada', 'forma_pagamento',
+                    'comanda_servico', 'empresa', 'forma_pagamento',
                     'pagamento_colaborador', 'pagamento_colaborador_item',
                     'servicos', 'usuario'
-                ]) AS tables(table_name)
+                ];
+                missing_tables text[];
+            BEGIN
+                SELECT COALESCE(array_agg(table_name ORDER BY table_name), ARRAY[]::text[])
+                INTO missing_tables
+                FROM unnest(required_tables) AS tables(table_name)
                 WHERE to_regclass('public.' || quote_ident(table_name)) IS NULL;
 
-                IF missing_table_count = expected_table_count THEN
+                IF cardinality(missing_tables) = cardinality(required_tables) THEN
                     CREATE TABLE public.empresa (
                         empresa_id serial CONSTRAINT empresa_pkey PRIMARY KEY,
                         nome text NOT NULL,
@@ -148,14 +147,6 @@ public partial class ExistingSchemaAuthAndOrderLinks : Migration
                             FOREIGN KEY (colaborador_id) REFERENCES public.colaborador (colaborador_id)
                     );
 
-                    CREATE TABLE public.entrada (
-                        historico_id integer,
-                        entry_id serial CONSTRAINT entrada_pkey PRIMARY KEY,
-                        caixa_id integer NOT NULL,
-                        client_id integer NOT NULL,
-                        data_hora date NOT NULL
-                    );
-
                     CREATE TABLE public.pagamento_colaborador (
                         pagamento_id serial CONSTRAINT pagamento_colaborador_pkey PRIMARY KEY,
                         colaborador_id integer,
@@ -178,8 +169,17 @@ public partial class ExistingSchemaAuthAndOrderLinks : Migration
                             FOREIGN KEY (comanda_servico_id) REFERENCES public.comanda_servico (comanda_servico_id)
                     );
 
-                ELSIF missing_table_count > 0 THEN
-                    RAISE EXCEPTION 'The database contains a partial salon schema. Restore the missing legacy tables or use a new empty database before applying this migration.';
+                ELSIF cardinality(missing_tables) > 0 THEN
+                    RAISE EXCEPTION 'The database contains a partial salon schema. Missing required tables: %. Restore the missing tables or use an empty database.',
+                        array_to_string(missing_tables, ', ');
+                ELSIF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND ((table_name = 'usuario' AND column_name IN ('role', 'colaborador_id'))
+                           OR (table_name = 'comanda' AND column_name = 'caixa_id'))
+                ) THEN
+                    RAISE EXCEPTION 'The salon schema already has columns from the initial EF migration, but that migration is not recorded. Restore a backup that includes the matching EF migration history, or migrate an empty database before importing data.';
                 END IF;
             END
             $$;

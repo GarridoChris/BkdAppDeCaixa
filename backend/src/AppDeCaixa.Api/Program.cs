@@ -31,7 +31,29 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.RateLimiting;
 
-var builder = WebApplication.CreateBuilder(args);
+var migrateDatabase = args is ["--migrate"];
+var builder = WebApplication.CreateBuilder(migrateDatabase ? [] : args);
+
+var configuredConnectionString = builder.Configuration.GetConnectionString("Default");
+if (migrateDatabase && string.IsNullOrWhiteSpace(configuredConnectionString))
+{
+    throw new InvalidOperationException("ConnectionStrings__Default must be configured to apply migrations.");
+}
+
+var connectionString = configuredConnectionString
+    ?? "Host=localhost;Port=5432;Database=organizaeh;Username=appdecaixa;Password=development-only";
+builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
+
+if (migrateDatabase)
+{
+    await using var migrationApp = builder.Build();
+    await using var scope = migrationApp.Services.CreateAsyncScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    await dbContext.Database.MigrateAsync();
+    Console.WriteLine("Database schema is up to date.");
+    return;
+}
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler(options =>
@@ -64,9 +86,6 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
         .AllowAnyHeader()
         .AllowAnyMethod()));
 
-var connectionString = builder.Configuration.GetConnectionString("Default")
-    ?? "Host=localhost;Port=5432;Database=organizaeh;Username=appdecaixa;Password=development-only";
-builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 var businessTimeZoneId = builder.Configuration["Business:TimeZoneId"] ?? "America/Bahia";
 builder.Services.AddSingleton(new BusinessDateProvider(TimeZoneInfo.FindSystemTimeZoneById(businessTimeZoneId)));
 

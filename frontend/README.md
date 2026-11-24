@@ -32,10 +32,24 @@ O MVP usa armazenamento de sessão em memória, adequado a um processo único de
 - O token dura 15 minutos e não há endpoint de renovação nem revogação. Ao expirar ou quando a API reinicia e invalida seu JWT de desenvolvimento, o usuário precisa entrar novamente.
 - Atualmente preços, valores de ordem e comissões são inteiros em reais. A interface exibe BRL com centavos (`R$ 10,00`), mas a API atual não consegue produzir nem persistir centavos para comissão. Para comissões fracionárias em centavos, o contrato e a persistência precisam ser ampliados no backend.
 - O gerente recebe o recibo completo na resposta do cadastro do pagamento e consegue confirmar que os serviços saíram da lista pendente. A consulta histórica completa do pagamento não existe para gerente; o endpoint de comissão do funcionário retorna `payoutId`, data e forma de pagamento por item.
-- A API não oferece busca/listagem de comandas abertas. A interface guarda apenas o ID da comanda aberta na sessão da aba, por operador, para recuperá-la da API após recarregar a página no mesmo navegador.
+- Gerente e Caixa compartilham a lista em `GET /api/orders?status=open`. O servidor filtra pela empresa autenticada e retorna ID, cliente, caixa, abertura, estado e total. A tela atualiza a lista e a comanda selecionada ao entrar na operação, recuperar o foco, concluir uma operação e a cada 20 segundos enquanto estiver visível.
 - A API ainda não fornece histórico de recibos/anexos, comprovantes ou fechamento formal da quinzena. Nenhum desses recursos é usado para registrar pagamento de comissão no fluxo atual.
-- Fiado e quitação de dívidas foram deixados fora da interface desta entrega.
+- Limitação anterior do Fiado no frontend. A tela oferece essa forma de pagamento ao gerente, mas não coleta a justificativa obrigatória. A API rejeita o envio sem a nota. A liquidação de dívidas continua fora desta interface.
 
 ## Validação
 
 Execute `npm run build` após instalar as dependências. O fluxo completo com dados reais requer API e banco ativos, um usuário de cada perfil, um profissional ligado à conta Funcionário, ao menos um serviço ativo e comandas fechadas na quinzena selecionada.
+
+## Validação de comandas compartilhadas
+
+Na raiz do projeto, com o PostgreSQL disponível no PATH (ou em `PG_BIN`), execute estes comandos em um terminal de desenvolvimento. O teste cria um cluster PostgreSQL temporário, aplica o esquema e inicia instâncias próprias da API e do Next em portas locais livres.
+
+```powershell
+dotnet build backend/src/AppDeCaixa.Api
+npm --prefix frontend run build
+node --test backend/tests/shared-orders/shared-orders.test.mjs
+```
+
+Para incluir a navegação desktop e celular, disponibilize o pacote Playwright para o Node e defina `ORDER_TEST_BROWSER` com o caminho de um executável Chromium ou Edge. Para a conferência manual, use dois usuários diferentes da mesma empresa na mesma instalação de homologação via HTTPS. Abra três comandas, alterne entre elas e lance serviços pelos dois dispositivos. Verifique o bloqueio do fechamento do caixa, pague uma comanda e confira as duas restantes. Ao finalizar as demais, confira o caixa e as comissões da quinzena.
+
+O frontend envia `expectedOrder: { totalValue, itemCount }` no pagamento integral. Uma alteração entre a revisão e a gravação retorna HTTP 409 e exige nova conferência. Clientes anteriores da API podem continuar usando o contrato sem esse campo.

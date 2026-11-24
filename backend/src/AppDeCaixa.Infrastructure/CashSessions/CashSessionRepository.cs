@@ -98,11 +98,8 @@ public sealed class CashSessionRepository(AppDbContext dbContext) : ICashSession
             return CashSessionCloseStatus.NotOpen;
         }
 
-        var hasOpenOrders = await dbContext.ServiceOrders.AnyAsync(order =>
-            order.CompanyId == companyId &&
-            order.CashSessionId == sessionId &&
-            order.ClosedAt == null &&
-            order.Status == "Open",
+        var hasOpenOrders = await dbContext.OpenOrders(companyId).AnyAsync(
+            order => order.CashSessionId == sessionId,
             cancellationToken);
         if (hasOpenOrders)
         {

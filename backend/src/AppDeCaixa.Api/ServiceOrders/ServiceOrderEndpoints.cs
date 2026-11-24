@@ -34,6 +34,29 @@ public static class ServiceOrderEndpoints
             })
             .WithName("OpenServiceOrder");
 
+        group.MapGet("", async (
+                string? status,
+                ClaimsPrincipal principal,
+                ServiceOrderService serviceOrders,
+                CancellationToken cancellationToken) =>
+            {
+                if (!TryGetCompany(principal, out var companyId))
+                {
+                    return Results.Forbid();
+                }
+
+                if (status is not null && !string.Equals(status, "open", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["status"] = ["Only the open status is supported."]
+                    });
+                }
+
+                return Results.Ok(await serviceOrders.ListOpenAsync(companyId, cancellationToken));
+            })
+            .WithName("ListOpenServiceOrders");
+
         group.MapGet("/{orderId:int}", async (
                 int orderId,
                 ClaimsPrincipal principal,

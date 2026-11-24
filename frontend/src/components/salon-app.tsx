@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Role = "Manager" | "Cashier" | "Employee";
 type User = { id: number; name: string; email: string; role: Role; companyId: number; employeeId: number | null };
@@ -8,12 +8,13 @@ type CashSession = { id: number; openedOn: string; closedOn: string | null; open
 type Collaborator = { id: number; name: string; cpf?: string | null; email?: string | null };
 type Service = { id: number; name: string; description: string; price: number; commissionPercentage: number };
 type OrderItem = { itemId: number; serviceName: string; collaboratorName: string; unitPrice: number; catalogPrice: number };
-type Order = { id: number; clientName: string; status: string; totalValue: number; items: OrderItem[]; payments: Array<{ id: number; amount: number; paymentMethod: string; paymentMethodId: number }>; closedAt?: string | null };
+type OrderSummary = { id: number; clientName: string | null; status: string; totalValue: number; cashSessionId: number | null; openedAt: string };
+type Order = OrderSummary & { items: OrderItem[]; payments: Array<{ id: number; amount: number; paymentMethod: string; paymentMethodId: number }>; closedAt?: string | null };
 type PaymentMethod = { id: number; name: string; requiresManagerAuthorization: boolean };
 type CommissionItem = { serviceOrderItemId: number; orderId: number; clientName: string | null; serviceName: string; orderClosedAt: string; chargedAmount: number; commissionPercentage: number; commissionAmount: number };
 type CommissionPreview = { collaboratorId: number; collaboratorName: string; period: { year: number; month: number; half: number; startDate: string; endDate: string }; itemCount: number; totalAmount: number; items: CommissionItem[] };
 type EmployeeCommission = { collaboratorId: number; collaboratorName: string; period: CommissionPreview["period"]; itemCount: number; totalCommission: number; paidCommission: number; unpaidCommission: number; items: Array<CommissionItem & { isPaid: boolean; payoutId: number | null; paymentDate: string | null; paymentMethod: string | null }> };
-type Reconciliation = { status: string; openingCash: number; cashSales: number; cashIn: number; cashOut: number; pixSales: number; debitCardSales: number; creditCardSales: number; fiadoDebt: number; expectedCash: number; countedCash: number | null; difference: number | null; isBalanced: boolean | null };
+type Reconciliation = { cashSessionId: number; status: string; openingCash: number; cashSales: number; cashIn: number; cashOut: number; pixSales: number; debitCardSales: number; creditCardSales: number; fiadoDebt: number; expectedCash: number; countedCash: number | null; difference: number | null; isBalanced: boolean | null };
 type ApiResponse<T> = { data?: T; error?: string; status?: number; networkError?: boolean };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -21,10 +22,11 @@ const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyl
 const dateOnly = new Intl.DateTimeFormat("pt-BR", { dateStyle: "long", timeZone: "America/Bahia" });
 const roleName: Record<Role, string> = { Manager: "Gerente", Cashier: "Caixa", Employee: "Funcionário" };
 
-async function api<T>(path: string, method = "GET", body?: unknown, csrfToken?: string): Promise<ApiResponse<T>> {
+async function api<T>(path: string, method = "GET", body?: unknown, csrfToken?: string, signal?: AbortSignal): Promise<ApiResponse<T>> {
   try {
     const response = await fetch(`/api/bff/${path}`, {
       method,
+      signal,
       cache: "no-store",
       headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(method === "GET" ? {} : { "X-CSRF-Token": csrfToken ?? "" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -61,28 +63,6 @@ export function SalonApp() {
   const [csrfToken, setCsrfToken] = useState("");
   const [checkingSession, setCheckingSession] = useState(true);
   const [authMessage, setAuthMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "success" | "error" | "warning"; text: string } | null>(null);
-  const [activeView, setActiveView] = useState("operacao");
-  const [cashSession, setCashSession] = useState<CashSession | null>(null);
-  const [services, setServices] = useState<Service[]>([]);
-  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [order, setOrder] = useState<Order | null>(null);
-  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
-  const [commission, setCommission] = useState<CommissionPreview | null>(null);
-  const [employeeCommission, setEmployeeCommission] = useState<EmployeeCommission | null>(null);
-  const [selectedCollaboratorId, setSelectedCollaboratorId] = useState("");
-  const [period, setPeriod] = useState(() => {
-    const today = localToday();
-    const [year, month, day] = today.split("-").map(Number);
-    return { year, month, half: day <= 15 ? 1 : 2 };
-  });
-  const [pendingPayoutCheck, setPendingPayoutCheck] = useState<CommissionItem[] | null>(null);
-  const [pendingPaymentOrderId, setPendingPaymentOrderId] = useState<number | null>(null);
-
-  const notify = (kind: "success" | "error" | "warning", text: string) => setNotice({ kind, text });
-
   const loadSession = useCallback(async () => {
     setCheckingSession(true);
     try {
@@ -91,7 +71,6 @@ export function SalonApp() {
       if (response.ok && result?.user) {
         setUser(result.user as User);
         setCsrfToken(result.csrfToken ?? "");
-        setActiveView(result.user.role === "Employee" ? "comissoes" : "operacao");
       } else {
         setUser(null);
         setCsrfToken("");
@@ -116,43 +95,121 @@ export function SalonApp() {
     return () => window.removeEventListener("salon-session-expired", expired);
   }, []);
 
-  const refreshOperationalData = useCallback(async () => {
-    if (!user || user.role === "Employee") return;
-    const [session, serviceList, collaboratorList, methods] = await Promise.all([
-      api<CashSession>("cash-sessions/current"),
+  if (checkingSession) return <main className="loading-screen"><div className="spinner" />Carregando sua sessão…</main>;
+  if (!user) return <Login message={authMessage} onLogin={(nextUser, nextCsrf) => {
+    setUser(nextUser); setCsrfToken(nextCsrf); setAuthMessage("");
+  }} />;
+
+  return <SalonWorkspace key={user.companyId + "-" + user.id} user={user} csrfToken={csrfToken} signOut={async () => {
+    await fetch("/api/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
+    setUser(null); setCsrfToken(""); setAuthMessage("");
+  }} />;
+}
+
+function SalonWorkspace({ user, csrfToken, signOut }: { user: User; csrfToken: string; signOut: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "success" | "error" | "warning"; text: string } | null>(null);
+  const [activeView, setActiveView] = useState(user.role === "Employee" ? "comissoes" : "operacao");
+  const [cashSession, setCashSession] = useState<CashSession | null | undefined>(undefined);
+  const [services, setServices] = useState<Service[]>([]);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [orderDetails, setOrder] = useState<Order | null>(null);
+  const [openOrders, setOpenOrders] = useState<OrderSummary[] | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+  const order = orderDetails?.id === selectedOrderId ? orderDetails : null;
+  const [syncError, setSyncError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const displayedOrder = useRef<Order | null>(null);
+  const showOrder = useCallback((next: Order | null) => {
+    displayedOrder.current = next;
+    setOrder(next);
+  }, []);
+  const refreshOrders = () => setRefreshKey(key => key + 1);
+  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
+  const [commission, setCommission] = useState<CommissionPreview | null>(null);
+  const [employeeCommission, setEmployeeCommission] = useState<EmployeeCommission | null>(null);
+  const [selectedCollaboratorId, setSelectedCollaboratorId] = useState("");
+  const [period, setPeriod] = useState(() => {
+    const today = localToday();
+    const [year, month, day] = today.split("-").map(Number);
+    return { year, month, half: day <= 15 ? 1 : 2 };
+  });
+  const [pendingPayoutCheck, setPendingPayoutCheck] = useState<CommissionItem[] | null>(null);
+  const [pendingPaymentOrderId, setPendingPaymentOrderId] = useState<number | null>(null);
+
+  const notify = (kind: "success" | "error" | "warning", text: string) => setNotice({ kind, text });
+
+  const refreshCatalog = useCallback(async () => {
+    if (user.role === "Employee") return;
+    const [serviceList, collaboratorList, methods] = await Promise.all([
       api<Service[]>("services"),
       api<Collaborator[]>("collaborators"),
       api<PaymentMethod[]>("payment-methods"),
     ]);
-    setCashSession(session.data ?? null);
     setServices(serviceList.data ?? []);
     setCollaborators(collaboratorList.data ?? []);
     setPaymentMethods(methods.data ?? []);
-    if (session.status !== 404 && session.error) notify("error", session.error);
-    if (collaboratorList.data?.length && !selectedCollaboratorId) setSelectedCollaboratorId(String(collaboratorList.data[0].id));
-  }, [user, selectedCollaboratorId]);
+    const first = collaboratorList.data?.[0];
+    if (first) setSelectedCollaboratorId(current => current || String(first.id));
+  }, [user.role]);
 
-  useEffect(() => { void refreshOperationalData(); }, [refreshOperationalData]);
+  useEffect(() => { void refreshCatalog(); }, [refreshCatalog]);
 
   useEffect(() => {
-    if (!user || user.role === "Employee") return;
-    try {
-      const saved = JSON.parse(sessionStorage.getItem("salon_active_order") ?? "null") as { userId?: number; orderId?: number } | null;
-      if (!saved || saved.userId !== user.id || !saved.orderId) return;
-      void api<Order>(`orders/${saved.orderId}`).then((response) => {
-        if (response.data) setOrder(response.data);
-        else sessionStorage.removeItem("salon_active_order");
-      });
-    } catch {
-      sessionStorage.removeItem("salon_active_order");
-    }
-  }, [user]);
+    if (activeView !== "operacao" || user.role === "Employee" || busy) return;
+    const controller = new AbortController();
+    const read = <T,>(path: string) => api<T>(path, "GET", undefined, undefined, controller.signal);
+    let reading = false;
+    const sync = async () => {
+      if (reading || document.visibilityState === "hidden") return;
+      reading = true;
+      const [session, list, detail] = await Promise.all([
+        read<CashSession>("cash-sessions/current"),
+        read<OrderSummary[]>("orders?status=open"),
+        selectedOrderId ? read<Order>(`orders/${selectedOrderId}`) : null,
+      ]);
+      reading = false;
+      if (controller.signal.aborted) return;
+      if (session.data) setCashSession(session.data);
+      else if (session.status === 404) setCashSession(previous => previous?.closedOn ? previous : null);
+      if (list.data) setOpenOrders(list.data);
 
-  const signOut = async () => {
-    await fetch("/api/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
-    setUser(null); setOrder(null); setCashSession(null); setNotice(null); setAuthMessage("");
-    sessionStorage.removeItem("salon_active_order");
-  };
+      const next = detail?.data;
+      if (next) {
+        const previous = displayedOrder.current;
+        if (previous?.id === next.id && previous.status !== next.status) {
+          notify("warning", `A comanda #${next.id} foi finalizada. Confira o pagamento abaixo.`);
+        } else if (previous?.id === next.id && previous.items.length !== next.items.length) {
+          notify("warning", `A comanda #${next.id} recebeu novos serviços. Confira os lançamentos e o total.`);
+        }
+        showOrder(next);
+        setPendingPaymentOrderId(id => id === next.id ? null : id);
+      } else if (detail?.status === 404) {
+        showOrder(null);
+        setSelectedOrderId(null);
+        notify("warning", "A comanda selecionada não está mais disponível.");
+      }
+      setSyncError(list.error || (session.status !== 404 && session.error) || (detail?.status !== 404 && detail?.error)
+        ? "Não foi possível atualizar todos os dados do caixa. Confira a conexão e atualize antes de continuar." : "");
+    };
+    void sync();
+    const interval = window.setInterval(sync, 20000);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [activeView, busy, refreshKey, selectedOrderId, showOrder, user.role]);
+
+  function selectOrder(id: number) {
+    if (id === selectedOrderId) { refreshOrders(); return; }
+    showOrder(null);
+    setSelectedOrderId(id);
+  }
 
   const afterMutation = <T,>(response: ApiResponse<T>, success: string, onSuccess?: (data: T) => void) => {
     if (response.data !== undefined) {
@@ -161,7 +218,6 @@ export function SalonApp() {
       return true;
     }
     if (response.status === 401) {
-      void loadSession();
       notify("warning", "Sua sessão expirou. Entre novamente; confira o resultado da operação antes de repeti-la.");
     } else {
       notify(response.networkError ? "warning" : "error", response.error ?? "A solicitação não foi concluída.");
@@ -184,8 +240,8 @@ export function SalonApp() {
     const form = new FormData(formElement);
     const response = await api<Order>("orders", "POST", { clientName: String(form.get("clientName") ?? "").trim() }, csrfToken);
     if (afterMutation(response, `Comanda #${response.data?.id ?? ""} aberta.`, (created) => {
-      setOrder(created);
-      sessionStorage.setItem("salon_active_order", JSON.stringify({ userId: user?.id, orderId: created.id }));
+      showOrder(created);
+      setSelectedOrderId(created.id);
     })) formElement.reset();
     setBusy(false);
   };
@@ -207,15 +263,12 @@ export function SalonApp() {
     };
     if (override) { body.priceOverride = Number(override); body.adjustmentReason = reason; }
     const response = await api<Order>(`orders/${order.id}/items`, "POST", body, csrfToken);
-    if (afterMutation(response, "Serviço adicionado à comanda.", setOrder)) formElement.reset();
+    if (response.status === 409) {
+      notify("warning", "A comanda ou o caixa não permite esse lançamento. Confira a situação atualizada.");
+    } else if (afterMutation(response, "Serviço adicionado à comanda.", showOrder)) {
+      formElement.reset();
+    }
     setBusy(false);
-  };
-
-  const refreshOrder = async (id = order?.id) => {
-    if (!id) return;
-    const response = await api<Order>(`orders/${id}`);
-    if (response.data) { setOrder(response.data); setPendingPaymentOrderId(null); notify("success", `Comanda #${id} atualizada pela API.`); }
-    else notify("warning", response.error ?? "Não foi possível confirmar a comanda. Não repita o pagamento ainda.");
   };
 
   const recordPayment = async (event: FormEvent<HTMLFormElement>) => {
@@ -227,30 +280,18 @@ export function SalonApp() {
     if (chosen.requiresManagerAuthorization && user?.role !== "Manager") {
       notify("error", "Fiado exige autorização de um gerente."); setBusy(false); return;
     }
-    const response = await api<Order>(`orders/${order.id}/payments`, "POST", { paymentMethodId: chosen.id }, csrfToken);
+    const response = await api<Order["payments"][number]>(`orders/${order.id}/payments`, "POST", {
+      paymentMethodId: chosen.id, expectedOrder: { totalValue: order.totalValue, itemCount: order.items.length },
+    }, csrfToken);
     if (response.data) {
-      const check = await api<Order>(`orders/${order.id}`);
-      if (check.data) {
-        setOrder(check.data);
-        if (check.data.status.toLowerCase() === "closed") sessionStorage.removeItem("salon_active_order");
-        notify("success", "Pagamento registrado e comanda confirmada pela API.");
-      } else notify("warning", "A API confirmou o pagamento, mas não foi possível carregar os detalhes da comanda. Atualize antes de qualquer nova ação.");
-    }
-    else if (response.networkError || response.status === 401 || (response.status !== undefined && response.status >= 500)) {
       setPendingPaymentOrderId(order.id);
-      const check = await api<Order>(`orders/${order.id}`);
-      if (check.data) {
-        setOrder(check.data);
-        if (check.data.status.toLowerCase() === "closed") sessionStorage.removeItem("salon_active_order");
-        setPendingPaymentOrderId(null);
-        if (check.data.payments?.some((payment) => payment.paymentMethodId === chosen.id && payment.amount === order.totalValue)) {
-          notify("success", "A API confirmou o pagamento. A comanda já está finalizada.");
-        } else {
-          notify("warning", "A API consultada não mostra esse pagamento. Confira o valor e a forma antes de decidir se fará uma nova tentativa.");
-        }
-      } else {
-        notify("warning", "O envio do pagamento pode ter sido concluído. Não tente novamente até confirmar a comanda na API.");
-      }
+      notify("success", `Pagamento de ${money.format(response.data.amount)} registrado na comanda #${order.id}.`);
+    } else if (response.status === 409) {
+      setPendingPaymentOrderId(order.id);
+      notify("warning", "Pagamento recusado. A comanda mudou ou já foi finalizada. Confira os dados atualizados.");
+    } else if (response.networkError || response.status === 401 || (response.status ?? 0) >= 500) {
+      setPendingPaymentOrderId(order.id);
+      notify("warning", "O resultado do pagamento é incerto. Confira os lançamentos e o estado da comanda antes de repetir.");
     } else notify("error", response.error ?? "O pagamento não foi registrado.");
     setBusy(false);
   };
@@ -269,6 +310,8 @@ export function SalonApp() {
         if (check.data.closedOn) notify("success", "A API confirmou o fechamento do caixa.");
         else notify("warning", "O caixa continua aberto na API. Confira antes de tentar fechar novamente.");
       } else notify("warning", "Não foi possível confirmar se o caixa fechou. Atualize a sessão antes de repetir.");
+    } else if (response.status === 409) {
+      notify("warning", "Fechamento recusado. Confira as comandas pendentes e a situação atual do caixa.");
     } else notify("error", response.error ?? "Não foi possível fechar o caixa.");
     const reconciliationResult = await api<Reconciliation>(`cash-sessions/${cashSession.id}/reconciliation`);
     setReconciliation(reconciliationResult.data ?? null);
@@ -342,15 +385,6 @@ export function SalonApp() {
 
   const viewItems = useMemo(() => order?.items ?? [], [order]);
 
-  if (checkingSession) return <main className="loading-screen"><div className="spinner" />Carregando sua sessão…</main>;
-  if (!user) return <Login message={authMessage} onLogin={(nextUser, nextCsrf) => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem("salon_active_order") ?? "null") as { userId?: number } | null;
-      if (saved && saved.userId !== nextUser.id) { sessionStorage.removeItem("salon_active_order"); setOrder(null); }
-    } catch { sessionStorage.removeItem("salon_active_order"); setOrder(null); }
-    setUser(nextUser); setCsrfToken(nextCsrf); setActiveView(nextUser.role === "Employee" ? "comissoes" : "operacao"); setNotice(null); setAuthMessage("");
-  }} />;
-
   const navItems = user.role === "Employee"
     ? [{ id: "comissoes", title: "Minhas comissões", icon: "◷" }]
     : [
@@ -359,7 +393,7 @@ export function SalonApp() {
       ];
   const isOperator = user.role !== "Employee";
   const isOperating = activeView === "operacao" && isOperator;
-  const isOrderClosed = order?.status.toLowerCase() === "closed";
+  const isOrderClosed = !!order?.closedAt || order?.status.toLowerCase() === "closed";
   const navigationTitle = navItems.find((item) => item.id === activeView)?.title;
   const hasMultipleViews = navItems.length > 1;
 
@@ -423,7 +457,7 @@ export function SalonApp() {
                   <p className="eyebrow">{businessDay.format(new Date())}</p>
                   <h1 id="screen-title" tabIndex={-1}>Operação do salão</h1>
                 </div>
-                <button className="button secondary" onClick={() => void refreshOperationalData()}>
+                <button className="button secondary" disabled={busy} onClick={() => { refreshOrders(); void refreshCatalog(); }}>
                   <span aria-hidden="true">↻</span> Atualizar dados
                 </button>
               </div>
@@ -432,13 +466,13 @@ export function SalonApp() {
                 <div className="session-icon" aria-hidden="true">R$</div>
                 <div className="session-info">
                   <h2 id="session-title">
-                    {cashSession ? (cashSession.closedOn ? "Caixa fechado" : "Caixa aberto") : "Nenhum caixa aberto"}
+                    {cashSession === undefined ? "Consultando caixa" : cashSession ? (cashSession.closedOn ? "Caixa fechado" : "Caixa aberto") : "Nenhum caixa aberto"}
                   </h2>
                   <p>{cashSession
                     ? ["Sessão #" + cashSession.id, money.format(cashSession.openingCash) + " na abertura", dateOnly.format(parseBusinessDate(cashSession.openedOn))].join(" · ")
-                    : "Abra o caixa para registrar comandas."}</p>
+                    : cashSession === null && "Abra o caixa para registrar comandas."}</p>
                 </div>
-                {!cashSession && (
+                {(cashSession === null || cashSession?.closedOn) && (
                   <form className="opening-form form-stack" onSubmit={openCashSession}>
                     <label htmlFor="openingCash">
                       Valor de abertura (R$)
@@ -451,19 +485,40 @@ export function SalonApp() {
 
               <div className="work-grid">
                 <section className="card order-card">
-                  <h2>{order ? "Comanda" : "Nova comanda"}</h2>
-                  {!cashSession || cashSession.closedOn ? (
-                    <p className="empty-state">Abra um caixa para iniciar uma comanda.</p>
-                  ) : !order ? (
-                    <form onSubmit={openOrder} className="form-stack">
+                  <h2 id="comandas-abertas" tabIndex={-1}>Comandas abertas</h2>
+                  {syncError && <p role="alert" className="empty-state">{syncError} <button type="button" className="button secondary" disabled={busy} onClick={refreshOrders}>Atualizar</button></p>}
+                  {openOrders === null ? (
+                    <p className="microcopy">{syncError ? "Lista indisponível." : "Carregando comandas…"}</p>
+                  ) : openOrders.length === 0 ? (
+                    <p className="empty-state">Nenhuma comanda aberta.</p>
+                  ) : (
+                    <ul className="open-orders">
+                      {openOrders.map(summary => (
+                        <li key={summary.id}>
+                          <button type="button" aria-pressed={selectedOrderId === summary.id} disabled={busy}
+                            onClick={() => selectOrder(summary.id)}>
+                            <span><b>#{summary.id} · {summary.clientName || "Cliente sem nome"}</b>
+                              <small>{dateTime.format(parseBusinessTimestamp(summary.openedAt))} · {summary.cashSessionId ? "Caixa #" + summary.cashSessionId : "Sem caixa vinculado"}</small>
+                            </span>
+                            <strong>{money.format(summary.totalValue)}</strong>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {cashSession && !cashSession.closedOn && (
+                    <form onSubmit={openOrder} className="form-stack separated">
+                      <h3>Nova comanda</h3>
                       <label>
                         Nome do cliente
                         <input name="clientName" autoCapitalize="words" enterKeyHint="go" placeholder="Ex.: Maria Silva" maxLength={120} required />
                       </label>
                       <button className="button primary full" disabled={busy}>Iniciar comanda</button>
                     </form>
-                  ) : (
-                    <>
+                  )}
+                  {selectedOrderId && !order && !syncError && <p role="status">Carregando comanda…</p>}
+                  {order && (
+                    <div key={order.id} className="separated">
                       <div className="active-order">
                         <div className="order-id">Comanda #{order.id}</div>
                         <strong className="client-name">{order.clientName || "Cliente sem nome"}</strong>
@@ -484,7 +539,7 @@ export function SalonApp() {
                         </>
                       )}
 
-                      {!isOrderClosed && (
+                      {!isOrderClosed && cashSession && !cashSession.closedOn && order.cashSessionId === cashSession.id && (
                         <>
                           <form onSubmit={addItem} className="form-stack separated">
                             <h3>Adicionar serviço</h3>
@@ -514,13 +569,13 @@ export function SalonApp() {
                                 <label>Observação<input name="observation" maxLength={500} placeholder="Detalhe do atendimento (opcional)" /></label>
                               </div>
                             </details>
-                            <button className="button secondary full" disabled={busy || services.length === 0 || collaborators.length === 0}>
+                            <button className="button secondary full" disabled={busy || !!syncError || pendingPaymentOrderId === order.id || services.length === 0 || collaborators.length === 0}>
                               Adicionar serviço
                             </button>
                           </form>
 
                           {order.items.length > 0 && (
-                            <form onSubmit={recordPayment} className="form-stack separated">
+                            <form key={order.items.length} onSubmit={recordPayment} className="form-stack separated">
                               <h3>Receber pagamento</h3>
                               <label>
                                 Forma de pagamento
@@ -531,7 +586,7 @@ export function SalonApp() {
                                   ))}
                                 </select>
                               </label>
-                              <button className="button primary full" disabled={busy}>
+                              <button className="button primary full" disabled={busy || !!syncError || pendingPaymentOrderId === order.id}>
                                 Registrar {money.format(order.totalValue)} e finalizar
                               </button>
                             </form>
@@ -539,23 +594,15 @@ export function SalonApp() {
                         </>
                       )}
 
-                      {pendingPaymentOrderId && (
-                        <button type="button" className="button warning full next-action" onClick={() => void refreshOrder(pendingPaymentOrderId)}>
+                      {pendingPaymentOrderId === order.id && (
+                        <button type="button" className="button warning full next-action" onClick={refreshOrders}>
                           Consultar pagamento na API antes de tentar novamente
                         </button>
                       )}
                       {isOrderClosed && (
-                        <>
-                          <div className="paid-badge">Comanda finalizada · {order.payments.map((payment) => payment.paymentMethod).join(", ")}</div>
-                          <button type="button" className="button primary full next-action" onClick={() => {
-                            setOrder(null);
-                            sessionStorage.removeItem("salon_active_order");
-                          }}>
-                            Abrir próxima comanda
-                          </button>
-                        </>
+                        <div className="paid-badge">Comanda finalizada · {order.payments.map((payment) => payment.paymentMethod).join(", ")}</div>
                       )}
-                    </>
+                    </div>
                   )}
                 </section>
 
@@ -569,7 +616,7 @@ export function SalonApp() {
                         <div><dt>Abertura</dt><dd>{money.format(cashSession.openingCash)}</dd></div>
                         <div><dt>Status</dt><dd className={cashSession.closedOn ? undefined : "text-green"}>{cashSession.closedOn ? "Fechado" : "Aberto"}</dd></div>
                       </dl>
-                      {reconciliation && (
+                      {reconciliation?.cashSessionId === cashSession.id && (
                         <div className="reconciliation">
                           <h3>Conferência da sessão #{cashSession.id}</h3>
                           <dl>
@@ -587,7 +634,7 @@ export function SalonApp() {
                         <form className="form-stack separated" onSubmit={closeCashSession}>
                           <label>Dinheiro contado (R$)<input name="countedCash" type="number" inputMode="numeric" min="0" step="1" required /></label>
                           <button className="button dark full" disabled={busy}>Conferir e fechar caixa</button>
-                          <p className="microcopy">Finalize as comandas abertas antes de fechar o caixa.</p>
+                          <p className="microcopy">Finalize as comandas abertas antes de fechar o caixa. <a href="#comandas-abertas">Ver comandas pendentes{openOrders ? " (" + openOrders.filter(item => item.cashSessionId === cashSession.id).length + ")" : ""}</a></p>
                         </form>
                       ) : (
                         <button type="button" className="button secondary full next-action" onClick={() => void api<Reconciliation>("cash-sessions/" + cashSession.id + "/reconciliation").then((result) => setReconciliation(result.data ?? null))}>

@@ -410,6 +410,42 @@ input::placeholder {
   background: var(--accent-soft);
 }
 
+#comandas-abertas {
+  scroll-margin-top: calc(var(--topbar-height) + 5rem);
+}
+
+.open-orders {
+  display: grid;
+  gap: .45rem;
+  padding: 0;
+  list-style: none;
+}
+
+.open-orders button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  width: 100%;
+  padding: .65rem .8rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .65rem;
+}
+
+.open-orders button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.open-orders small {
+  display: block;
+  color: var(--muted);
+}
+
 .order-id {
   color: var(--accent-deep);
   font-size: .8125rem;

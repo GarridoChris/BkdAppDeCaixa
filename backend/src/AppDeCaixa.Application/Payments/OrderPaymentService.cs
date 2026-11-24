@@ -4,6 +4,12 @@ namespace AppDeCaixa.Application.Payments;
 
 public sealed record PaymentMethodOption(int Id, string Name, bool RequiresManagerAuthorization);
 
+public sealed record ExpectedOrder(int TotalValue, int ItemCount)
+{
+    public bool Matches(long currentTotal, long currentItemCount) =>
+        TotalValue == currentTotal && ItemCount == currentItemCount;
+}
+
 public enum OrderPaymentStatus
 {
     Success,
@@ -30,7 +36,8 @@ public interface IOrderPaymentRepository
         bool isManager,
         string? note,
         DateTime recordedAt,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        ExpectedOrder? expectedOrder);
 }
 
 public sealed class OrderPaymentService(IOrderPaymentRepository repository)
@@ -46,7 +53,8 @@ public sealed class OrderPaymentService(IOrderPaymentRepository repository)
         bool isManager,
         string? note,
         DateTime recordedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ExpectedOrder? expectedOrder = null)
     {
         if (companyId <= 0 || orderId <= 0 || userId <= 0 || paymentMethodId <= 0)
         {
@@ -83,7 +91,8 @@ public sealed class OrderPaymentService(IOrderPaymentRepository repository)
             isManager,
             note,
             recordedAt,
-            cancellationToken);
+            cancellationToken,
+            expectedOrder);
     }
 
     private static OrderPaymentResult Invalid(string error) =>

@@ -112,7 +112,8 @@ public sealed class DebtSettlementServiceTests
             bool isManager,
             string? note,
             DateTime recordedAt,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            ExpectedOrder? expectedOrder) =>
             throw new NotSupportedException();
     }
 

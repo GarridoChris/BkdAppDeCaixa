@@ -78,7 +78,7 @@ Replace `YOUR_USER` and `YOUR_PASSWORD` with the PostgreSQL credentials you use 
 
 ## Existing-database migration
 
-`ExistingSchemaAuthAndOrderLinks` adds nullable `usuario.role`, `usuario.colaborador_id`, and `comanda.caixa_id` columns plus their constraints. For an empty database only, it also creates the original 12-table salon baseline. Existing rows remain valid and these fields start null. Rolling back this migration removes its added columns but leaves the baseline tables intact. The local salon database has this migration applied, so the updated baseline will not run again there.
+`ExistingSchemaAuthAndOrderLinks` adds nullable `usuario.role`, `usuario.colaborador_id`, and `comanda.caixa_id` columns plus their constraints. On an empty database, it creates the 11 required baseline tables. The unused `entrada` table is optional and is left intact when present. If required tables are missing from an existing schema, the migration lists them and stops. An already upgraded schema needs its matching `__EFMigrationsHistory`. Rolling back this migration removes its added columns and keeps the baseline tables.
 
 `CashSessionOneOpenPerCompany` adds a partial unique index so a company cannot have two cash sessions with `data_fechamento IS NULL`. The local database has both migrations applied. For another database, check for duplicate open sessions before applying it:
 
@@ -112,6 +112,16 @@ HTTP errors use Problem Details via ASP.NET Core exception handling. Unexpected 
 ## Database and migrations
 
 PostgreSQL is configured from `ConnectionStrings:Default` (environment form: `ConnectionStrings__Default`). The default database name is `organizaeh`; `backend/docker-compose.yml` is for local development. The EF Core context is in Infrastructure. The first migration creates the original salon tables for a blank database and only adds nullable columns and constraints to a database where those tables already exist. Do not enable automatic migrations at application startup.
+
+### Apply migrations on Railway
+
+Set `ConnectionStrings__Default` on the API service to the target PostgreSQL database. In **Settings → Deploy → Pre-Deploy Command**, enter:
+
+```text
+dotnet /app/AppDeCaixa.Api.dll --migrate
+```
+
+Railway runs this command in the built API image with access to the private database. The command applies pending EF migrations and exits. The Dockerfile supplies the web server's start command. Confirm the destination before the first run, especially if you plan to restore a full backup. Leave `APPDECAIXA_SEED_DEMO` unset for production.
 
 `backend/.env.example` lists configuration names and placeholders. PowerShell does not automatically load that file; set environment variables in the shell or use a local secret manager. The checked-in development fallback connection string is strictly local and must never be reused outside development.
 

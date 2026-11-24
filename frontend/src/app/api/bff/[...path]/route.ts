@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiBaseUrl, apiErrorTitle } from "@/lib/server-api";
+import { apiBaseUrl } from "@/lib/server-api";
 import { getSession, revokeSession } from "@/lib/session-store";
 
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ const routeRules: Array<{ pattern: RegExp; methods: string[] }> = [
   { pattern: /^cash-sessions\/\d+\/close$/, methods: ["POST"] },
   { pattern: /^cash-sessions\/\d+\/movements$/, methods: ["GET", "POST"] },
   { pattern: /^cash-sessions\/\d+\/reconciliation$/, methods: ["GET"] },
-  { pattern: /^orders$/, methods: ["POST"] },
+  { pattern: /^orders$/, methods: ["GET", "POST"] },
   { pattern: /^orders\/\d+$/, methods: ["GET"] },
   { pattern: /^orders\/\d+\/(?:items|payments)$/, methods: ["POST"] },
   { pattern: /^payment-methods$/, methods: ["GET"] },
