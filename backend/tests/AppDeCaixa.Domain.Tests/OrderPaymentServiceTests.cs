@@ -5,6 +5,15 @@ namespace AppDeCaixa.Domain.Tests;
 
 public sealed class OrderPaymentServiceTests
 {
+    [Theory]
+    [InlineData(100, 1, true)]
+    [InlineData(101, 1, false)]
+    [InlineData(100, 2, false)] // An additional service may have been discounted to zero.
+    public void Reviewed_payment_checks_both_value_and_item_count(long total, long items, bool matches)
+    {
+        Assert.Equal(matches, new ExpectedOrder(100, 1).Matches(total, items));
+    }
+
     [Fact]
     public async Task Fiado_is_forbidden_for_a_cashier()
     {
@@ -80,9 +89,11 @@ public sealed class OrderPaymentServiceTests
             isManager: false,
             note: null,
             recordedAt: DateTime.UnixEpoch,
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            expectedOrder: new ExpectedOrder(100, 2));
 
         Assert.Equal(OrderPaymentStatus.Success, result.Status);
+        Assert.Equal(new ExpectedOrder(100, 2), repository.LastExpectedOrder);
         Assert.Null(repository.LastNote);
         Assert.Equal(1, repository.RecordCalls);
     }
@@ -91,6 +102,7 @@ public sealed class OrderPaymentServiceTests
     {
         public int RecordCalls { get; private set; }
         public string? LastNote { get; private set; }
+        public ExpectedOrder? LastExpectedOrder { get; private set; }
 
         public Task<IReadOnlyList<PaymentMethodOption>> ListPaymentMethodsAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<PaymentMethodOption>>([method]);
@@ -108,10 +120,12 @@ public sealed class OrderPaymentServiceTests
             bool isManager,
             string? note,
             DateTime recordedAt,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            ExpectedOrder? expectedOrder)
         {
             RecordCalls++;
             LastNote = note;
+            LastExpectedOrder = expectedOrder;
             return Task.FromResult(new OrderPaymentResult(
                 OrderPaymentStatus.Success,
                 new OrderPaymentDetails

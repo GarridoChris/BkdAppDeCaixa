@@ -78,7 +78,7 @@ Replace `YOUR_USER` and `YOUR_PASSWORD` with the PostgreSQL credentials you use 
 
 ## Existing-database migration
 
-`ExistingSchemaAuthAndOrderLinks` adds nullable `usuario.role`, `usuario.colaborador_id`, and `comanda.caixa_id` columns plus their constraints. For an empty database only, it also creates the original 12-table salon baseline. Existing rows remain valid and these fields start null. Rolling back this migration removes its added columns but leaves the baseline tables intact. The local salon database has this migration applied, so the updated baseline will not run again there.
+`ExistingSchemaAuthAndOrderLinks` adds nullable `usuario.role`, `usuario.colaborador_id`, and `comanda.caixa_id` columns plus their constraints. On an empty database, it creates the 11 required baseline tables. The unused `entrada` table is optional and is left intact when present. If required tables are missing from an existing schema, the migration lists them and stops. An already upgraded schema needs its matching `__EFMigrationsHistory`. Rolling back this migration removes its added columns and keeps the baseline tables.
 
 `CashSessionOneOpenPerCompany` adds a partial unique index so a company cannot have two cash sessions with `data_fechamento IS NULL`. The local database has both migrations applied. For another database, check for duplicate open sessions before applying it:
 

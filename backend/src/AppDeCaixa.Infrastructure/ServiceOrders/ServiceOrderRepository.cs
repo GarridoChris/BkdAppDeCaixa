@@ -11,11 +11,23 @@ namespace AppDeCaixa.Infrastructure.ServiceOrders;
 
 public sealed class ServiceOrderRepository(AppDbContext dbContext) : IServiceOrderRepository
 {
+    public async Task<IReadOnlyList<OpenServiceOrderSummary>> ListOpenAsync(int companyId, CancellationToken cancellationToken) =>
+        await dbContext.OpenOrders(companyId)
+            .AsNoTracking()
+            .OrderBy(order => order.OpenedAt)
+            .ThenBy(order => order.Id)
+            .Select(order => new OpenServiceOrderSummary(
+                order.Id, order.ClientName, order.CashSessionId, order.OpenedAt, "Open", order.TotalValue ?? 0))
+            .ToListAsync(cancellationToken);
+
     public async Task<ServiceOrderDetails?> GetByIdAsync(
         int companyId,
         int orderId,
         CancellationToken cancellationToken)
     {
+        // The header, items and payments must describe the same point in time.
+        await using var snapshot = await dbContext.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead, cancellationToken);
         var order = await dbContext.ServiceOrders
             .AsNoTracking()
             .Where(candidate => candidate.CompanyId == companyId && candidate.Id == orderId)
@@ -96,6 +108,7 @@ public sealed class ServiceOrderRepository(AppDbContext dbContext) : IServiceOrd
             ? Math.Max(0, originalFiado - settledFiado)
             : 0;
 
+        await snapshot.CommitAsync(cancellationToken);
         return new ServiceOrderDetails(
             order.Id,
             order.ClientName,

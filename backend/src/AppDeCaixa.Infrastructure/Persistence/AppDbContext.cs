@@ -11,6 +11,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ServiceOrderRecord> ServiceOrders => Set<ServiceOrderRecord>();
     public DbSet<ServiceCatalogRecord> Services => Set<ServiceCatalogRecord>();
 
+    internal IQueryable<ServiceOrderRecord> OpenOrders(int companyId) =>
+        ServiceOrders.Where(order => order.CompanyId == companyId && order.ClosedAt == null &&
+            order.Status != null && order.Status.ToLower() == "open");
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<UserRecord>(entity =>

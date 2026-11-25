@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: ./backend
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Hosting__RedirectToHttps: "false"
+      ConnectionStrings__Default: ${APPDECAIXA_DOCKER_DB_CONNECTION:?Set the Docker database connection string}
+      Authentication__SigningKey: ${APPDECAIXA_DOCKER_SIGNING_KEY:?Set the Docker API signing key}
+      Frontend__Origin: ${APP_ORIGIN:-http://localhost:3000}
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - api
+    environment:
+      API_BASE_URL: http://api:8080
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:3000:3000"
